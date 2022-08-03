@@ -183,8 +183,40 @@ func (d *differ) establishCorrespondence(old *types.Named, new types.Type) bool 
 		// matching an old one.
 		if newn, ok := new.(*types.Named); ok {
 			if old.Obj().Pkg() != d.old || newn.Obj().Pkg() != d.new {
-				return old.Obj().Id() == newn.Obj().Id()
+				// check if import paths change.
+				// if this is not done, this:
+				//     import "a/b/c"
+				//     var Thing c.Type
+				// changing to this:
+				//     import "x/y/z"
+				//     var Thing z.Type
+				// is considered "not a change", which is clearly incorrect.
+				// anything referencing Thing's type (e.g. declaring a variable with the type)
+				// will fail to compile after that change.
+				//
+				// unfortunately this does not go far enough, as the exposed API of
+				// an exposed third-party type are *also* part of "your" API, so any
+				// incompatible change they make is something you are forcing on your
+				// users as a library... so this kind of check needs to be done
+				// transitively on types exposed by a package, which apidiff as a whole
+				// does not appear to do at all.
+				//
+				// I don't have a fix for that.
+				// I suspect the whole fundamental approach of this package is flawed, and we'd
+				// be better off with a transitive sorted API *dumper* that then just gets
+				// passed through `diff` verbatim, or something.
+				oldp := old.Obj().Pkg()
+				newnp := newn.Obj().Pkg()
+				oldpath, newpath := "", ""
+				if oldp != nil {
+					oldpath = oldp.Path()
+				}
+				if newnp != nil {
+					newpath = newnp.Path()
+				}
+				return oldpath == newpath && old.Obj().Id() == newn.Obj().Id()
 			}
+
 			// Prior to generics, any two named types could correspond.
 			// Two named types cannot correspond if their type parameter lists don't match.
 			if !typeParamListsMatch(old.TypeParams(), newn.TypeParams()) {
